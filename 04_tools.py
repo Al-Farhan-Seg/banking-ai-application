@@ -78,11 +78,30 @@ def account_name() -> str:
 
     account = load_account()
     return f"Your account name is {account['name']}."
+
+
+def transfer_amount(amount: float, acc_from: str, acc_to: str) -> str:
+    """Transferring money from one account to another"""
+    acc_from = load_account().values()
+    acc_to = load_account().values()
+
+    if amount <= 0:
+        return "Transfer amount has to be postive"
+    if amount > acc_from["balance"]:
+            return f"Insufficient funds. Your balance is only UGX {acc_from['balance']:,.0f}."
+    acc_from["balance"] -= amount
+    save_account(acc_from)
+    acc_to["balance"] += amount
+    save_account(acc_to)
+    return f"{amount:,.0f} has been withdrawn from {acc_from['name']} and has been deposited to {acc_to['name']}"
+
+
     
+
 
 agent = create_agent(
     model=model,
-    tools=[check_balance, deposit, withdraw, account_name],
+    tools=[check_balance, deposit, withdraw, account_name, transfer_amount],
     system_prompt=(
         "You are a helpful bank assistant. Use a tool to check the balance, "
         "deposit, or withdraw money -- never make up numbers. Confirm what you "
