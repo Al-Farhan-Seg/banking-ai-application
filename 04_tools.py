@@ -73,10 +73,16 @@ def withdraw(amount: float) -> str:
     save_account(account)
     return f"Withdrew UGX {amount:,.0f}. New balance: UGX {account['balance']:,.0f}."
 
+def account_name() -> str:
+    """Pick the account name from the account details"""
+
+    account = load_account()
+    return f"Your account name is {account['name']}."
+    
 
 agent = create_agent(
     model=model,
-    tools=[check_balance, deposit, withdraw],
+    tools=[check_balance, deposit, withdraw, account_name],
     system_prompt=(
         "You are a helpful bank assistant. Use a tool to check the balance, "
         "deposit, or withdraw money -- never make up numbers. Confirm what you "
@@ -87,8 +93,11 @@ agent = create_agent(
 
 def ask(question: str):
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
+    # Playing aroun with the values
+    ''' 
     print(dir(result))  # Additions mid-session
     pprint.pprint(dir(result["messages"][-1])) # additions mid-session
+    '''
     print("Assistant:", result["messages"][-1].content, "\n")
 
 
