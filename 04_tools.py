@@ -6,10 +6,11 @@ A TOOL is just a Python function the model is allowed to call.
 An AGENT is a model that decides WHICH tool to call and WHEN, reads the
 result, and then writes the final answer.
 
-Here the model can check a balance, deposit, or withdraw money.
+Here the model can check a balance, deposit, withdraw, or transfer money
+between accounts.
 (On Day 2 we add a HUMAN approval step before money leaves the account.)
 
-Run it:   python banking/day_1/04_tools.py   (type 'quit' to exit)
+Run it:   python banking/day_1/04_tools_fixed.py   (type 'quit' to exit)
 """
 
 import json
@@ -36,67 +37,93 @@ model = ChatOpenAI(
 ACCOUNT_FILE = Path(__file__).resolve().parent / "data" / "account.json"
 
 
-def load_account() -> dict:
-    """Read the account details from the JSON file."""
+def load_data() -> dict:
+    """Read the full {"accounts": [...]} structure from the JSON file."""
     return json.loads(ACCOUNT_FILE.read_text(encoding="utf-8"))
 
 
-def save_account(account: dict) -> None:
-    """Write the account details back to the JSON file (saves to disk)."""
-    ACCOUNT_FILE.write_text(json.dumps(account, indent=2), encoding="utf-8")
+def save_data(data: dict) -> None:
+    """Write the full {"accounts": [...]} structure back to the JSON file."""
+    ACCOUNT_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def check_balance() -> str:
-    """Return the current account balance."""
-    account = load_account()
-    return f"Your balance is UGX {account['balance']:,.0f}."
+def find_account(data: dict, identifier: str) -> dict:
+    """Look up one account by name or account number.
+
+    Matches case-insensitively, and allows a partial or reordered name
+    (e.g. "hawa" or "segujja farhan" both match "Farhan Segujja").
+    """
+    identifier = identifier.strip().lower()
+    identifier_tokens = set(identifier.split())
+    for account in data["accounts"]:
+        name = account["name"].lower()
+        if identifier == name or identifier == account["account_number"].lower():
+            return account
+        if identifier_tokens and identifier_tokens <= set(name.split()):
+            return account
+    raise ValueError(f"No account found matching '{identifier}'.")
 
 
-def deposit(amount: float) -> str:
-    """Add money to the account. 'amount' must be positive."""
+def check_balance(account: str) -> str:
+    """Return the current balance for the named account or account number."""
+    data = load_data()
+    acc = find_account(data, account)
+    return f"{acc['name']}'s balance is UGX {acc['balance']:,.0f}."
+
+
+def deposit(amount: float, account: str) -> str:
+    """Add money to the named account. 'amount' must be positive."""
     if amount <= 0:
         return "Deposit amount must be positive."
-    account = load_account()
-    account["balance"] += amount
-    save_account(account)
-    return f"Deposited UGX {amount:,.0f}. New balance: UGX {account['balance']:,.0f}."
+    data = load_data()
+    acc = find_account(data, account)
+    acc["balance"] += amount
+    save_data(data)
+    return f"Deposited UGX {amount:,.0f} into {acc['name']}'s account. New balance: UGX {acc['balance']:,.0f}."
 
 
-def withdraw(amount: float) -> str:
-    """Take money out of the account."""
+def withdraw(amount: float, account: str) -> str:
+    """Take money out of the named account."""
     if amount <= 0:
         return "Withdrawal amount must be positive."
-    account = load_account()
-    if amount > account["balance"]:
-        return f"Insufficient funds. Your balance is only UGX {account['balance']:,.0f}."
-    account["balance"] -= amount
-    save_account(account)
-    return f"Withdrew UGX {amount:,.0f}. New balance: UGX {account['balance']:,.0f}."
+    data = load_data()
+    acc = find_account(data, account)
+    if amount > acc["balance"]:
+        return f"Insufficient funds. {acc['name']}'s balance is only UGX {acc['balance']:,.0f}."
+    acc["balance"] -= amount
+    save_data(data)
+    return f"Withdrew UGX {amount:,.0f} from {acc['name']}'s account. New balance: UGX {acc['balance']:,.0f}."
 
-def account_name() -> str:
-    """Pick the account name from the account details"""
 
-    account = load_account()
-    return f"Your account name is {account['name']}."
+def account_name(account: str) -> str:
+    """Confirm the account name for the given name or account number."""
+    data = load_data()
+    acc = find_account(data, account)
+    return f"Your account name is {acc['name']}."
 
 
 def transfer_amount(amount: float, acc_from: str, acc_to: str) -> str:
-    """Transferring money from one account to another"""
-    acc_from = load_account().values()
-    acc_to = load_account().values()
-
+    """Transfer money from one account to another."""
     if amount <= 0:
-        return "Transfer amount has to be postive"
-    if amount > acc_from["balance"]:
-            return f"Insufficient funds. Your balance is only UGX {acc_from['balance']:,.0f}."
-    acc_from["balance"] -= amount
-    save_account(acc_from)
-    acc_to["balance"] += amount
-    save_account(acc_to)
-    return f"{amount:,.0f} has been withdrawn from {acc_from['name']} and has been deposited to {acc_to['name']}"
+        return "Transfer amount has to be positive."
 
+    data = load_data()
+    from_account = find_account(data, acc_from)
+    to_account = find_account(data, acc_to)
 
-    
+    if from_account is to_account:
+        return "Cannot transfer to the same account."
+    if amount > from_account["balance"]:
+        return f"Insufficient funds. {from_account['name']}'s balance is only UGX {from_account['balance']:,.0f}."
+
+    from_account["balance"] -= amount
+    to_account["balance"] += amount
+    save_data(data)
+
+    return (
+        f"UGX {amount:,.0f} has been withdrawn from {from_account['name']} "
+        f"and deposited to {to_account['name']}."
+    )
 
 
 agent = create_agent(
@@ -104,19 +131,15 @@ agent = create_agent(
     tools=[check_balance, deposit, withdraw, account_name, transfer_amount],
     system_prompt=(
         "You are a helpful bank assistant. Use a tool to check the balance, "
-        "deposit, or withdraw money -- never make up numbers. Confirm what you "
-        "did in one short sentence."
+        "deposit, withdraw, or transfer money -- never make up numbers. "
+        "Ask the user which account (by name or account number) if it isn't "
+        "clear. Confirm what you did in one short sentence."
     ),
 )
 
 
 def ask(question: str):
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
-    # Playing aroun with the values
-    ''' 
-    print(dir(result))  # Additions mid-session
-    pprint.pprint(dir(result["messages"][-1])) # additions mid-session
-    '''
     print("Assistant:", result["messages"][-1].content, "\n")
 
 
